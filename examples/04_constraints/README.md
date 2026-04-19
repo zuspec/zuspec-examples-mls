@@ -61,6 +61,13 @@ generated RTL is still operating directly on bits.
 | `expected/synth_report.txt` | Latest synthesis comparison results |
 | `DESIGN.md` | Full design rationale, architecture, and design decisions |
 | `PLAN.md` | Implementation plan |
+| **SystemVerilog version** | |
+| `rv32_core_c.svh` | Minimal `rv32_core_c` component stub |
+| `rv32i_decode_c.svh` | `rv32i_decode_c` — same 40-block decoder, SV class syntax |
+| `rv32m_decode_c.svh` | `rv32m_decode_c` — M-extension, SV class syntax |
+| `rv32_pkg.sv` | Package including all SV class headers |
+| `synth_compare_sv.py` | SV-class pipeline: parse → map → synthesize → emit RTL |
+| `test_rv32i_sv_decode.py` | 37 simulation + Verilator lint tests for the SV path |
 
 ---
 
@@ -74,6 +81,23 @@ pip install yowasp-yosys   # only needed for synthesis comparison
 
 The zuspec packages (zuspec-dataclasses, zuspec-synth) are installed via the
 workspace's `ivpm.yaml`.
+
+### Using the zuspec CLI
+
+With `zuspec-cli`, `zuspec-fe-sv`, and `zuspec-be-sv` installed:
+
+```bash
+cd examples/04_constraints
+
+# Synthesize from SystemVerilog source
+zuspec synth --fe sv rv32_pkg.sv --top rv32i_decode_c -o out/rv32i_decode.sv
+
+# Or using the YAML pipeline (all options in one file)
+zuspec pipeline pipeline.yaml rv32_pkg.sv
+```
+
+The `pipeline.yaml` file in this directory pre-configures the frontend, all
+optimization transforms, and the RTL backend.
 
 ### Synthesis comparison
 
@@ -89,6 +113,41 @@ python synth_compare.py --write-sv  # also save expected/rv32i_decode.sv
 cd examples/04_constraints
 python -m pytest test_rv32i_decode.py -v
 ```
+
+---
+
+## SystemVerilog Version
+
+The same decode logic is available as SystemVerilog action classes.  The SV
+sources are annotated with `(* zsp_output *)` attributes and `zsp_mark#(T)::valid()`
+calls — the `zuspec-fe-sv` front-end reads these to reconstruct the same IR
+that the Python decorator path produces.
+
+### SV synthesis pipeline
+
+```bash
+cd examples/04_constraints
+python synth_compare_sv.py          # parse SV, synthesize, print emitted RTL
+python synth_compare_sv.py --no-synth  # skip cube minimization, show support bits
+```
+
+The SV and Python versions produce equivalent constraint-block tables and
+identical minimized RTL output.
+
+### SV simulation + Verilator lint
+
+```bash
+cd examples/04_constraints
+python -m pytest test_rv32i_sv_decode.py -v
+```
+
+The test file:
+1. Parses `rv32_pkg.sv` through `zuspec-fe-sv` (pyslang-based)
+2. Runs the SV → IR → synthesis pipeline
+3. Evaluates all RV32I instruction encodings against the constraint-block IR
+4. Wraps the emitted SV wire assignments in a module and runs `verilator --lint-only`
+
+All 37 tests pass (36 decode correctness + 1 Verilator lint).
 
 ---
 

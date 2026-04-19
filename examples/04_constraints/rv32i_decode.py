@@ -77,11 +77,12 @@ class RV32IDecode(zdc.Action[RV32Core]):
     # the per-instruction constraints can read opcode/funct3/funct7b5 by name
     # rather than repeating the bit-slice arithmetic in every block.
     # The synthesizer's pre-pass recognises the extraction pattern and maps
-    # "self.opcode == X" guards to the corresponding bit-range of instr.
+    # "self._opcode == X" guards to the corresponding bit-range of instr.
+    # Marked internal: they are bit-slice aliases of instr, not true outputs.
     # ------------------------------------------------------------------
-    opcode    : zdc.u7  = zdc.rand()   # instr[6:0]
-    funct3    : zdc.u3  = zdc.rand()   # instr[14:12]
-    funct7b5  : zdc.u1  = zdc.rand()   # instr[30]
+    _opcode   : zdc.u7  = zdc.rand()   # instr[6:0]
+    _funct3   : zdc.u3  = zdc.rand()   # instr[14:12]
+    _funct7b5 : zdc.u1  = zdc.rand()   # instr[30]
 
     # ------------------------------------------------------------------
     # Decode outputs — solved by constraints; synthesized to wire assigns.
@@ -106,167 +107,122 @@ class RV32IDecode(zdc.Action[RV32Core]):
     # ==================================================================
     @constraint
     def c_extract_fields(self):
-        assert self.opcode   == (self.instr & 0x7F)
-        assert self.funct3   == ((self.instr >> 12) & 0x7)
-        assert self.funct7b5 == ((self.instr >> 30) & 0x1)
+        assert self._opcode   == (self.instr & 0x7F)
+        assert self._funct3   == ((self.instr >> 12) & 0x7)
+        assert self._funct7b5 == ((self.instr >> 30) & 0x1)
+
+    # ==================================================================
+    # Observability annotations — mark which outputs are observable and
+    # when.  These allow the cube minimizer to exploit don't-care (ODC)
+    # regions and produce smaller logic.
+    # ==================================================================
+
+    @constraint
+    def c_odc_annotations(self):
+        # mem_width and mem_signed are only observed by the pipeline on
+        # load and store instructions respectively; for all other opcodes
+        # the values are irrelevant and may be optimised away.
+        if self.is_load or self.is_store:
+            zdc.valid(self.mem_width)
+        if self.is_load:
+            zdc.valid(self.mem_signed)
+
+        # For load, store, branch, JAL and JALR the pipeline hard-codes the
+        # ALU operation from the decode flags (always ADD for addr/PC, SUB for
+        # branch compare).  alu_op only needs to be correct for R-type,
+        # I-type, LUI and AUIPC.
+        if not (self.is_load or self.is_store or
+                self.is_branch or self.is_jal or self.is_jalr):
+            zdc.valid(self.alu_op)
+
+        # Similarly for imm_sel: loads/stores/branches/JAL/JALR each have a
+        # single fixed immediate format that the pipeline can derive from the
+        # decode flags, so imm_sel is only observed for the remaining types.
+        if not (self.is_load or self.is_store or
+                self.is_branch or self.is_jal or self.is_jalr):
+            zdc.valid(self.imm_sel)
+
+        # use_rd: pipeline writeback stage gates register write on is_store and
+        # is_branch independently, so use_rd is only observed when the instruction
+        # is neither a store nor a branch.  This collapses use_rd to a constant.
+        if not (self.is_store or self.is_branch):
+            zdc.valid(self.use_rd)
 
     # ==================================================================
     # R-type instructions — opcode = 0x33
-    # use_rs1=1, use_rs2=1, use_rd=1, imm_sel=IMM_NONE
-    # is_load=0, is_store=0, is_branch=0, is_jal=0, is_jalr=0
     # ==================================================================
+
+    @constraint
+    def c_rtype_common(self):
+        if self._opcode == 0x33:
+            assert self.imm_sel == IMM_NONE
+            assert self.use_rs1 == 1
+            assert self.use_rs2 == 1
+            assert self.use_rd  == 1
+            assert self.is_load == 0
+            assert self.is_store == 0
+            assert self.is_branch == 0
+            assert self.is_jal == 0
+            assert self.is_jalr == 0
 
     @constraint
     def c_add(self):
-        if self.opcode == 0x33 and self.funct3 == 0 and self.funct7b5 == 0:
+        if self._opcode == 0x33 and self._funct3 == 0 and self._funct7b5 == 0:
             assert self.alu_op == ALU_ADD
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_sub(self):
-        if self.opcode == 0x33 and self.funct3 == 0 and self.funct7b5 == 1:
+        if self._opcode == 0x33 and self._funct3 == 0 and self._funct7b5 == 1:
             assert self.alu_op == ALU_SUB
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_sll(self):
-        if self.opcode == 0x33 and self.funct3 == 1 and self.funct7b5 == 0:
+        if self._opcode == 0x33 and self._funct3 == 1 and self._funct7b5 == 0:
             assert self.alu_op == ALU_SLL
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_slt(self):
-        if self.opcode == 0x33 and self.funct3 == 2 and self.funct7b5 == 0:
+        if self._opcode == 0x33 and self._funct3 == 2 and self._funct7b5 == 0:
             assert self.alu_op == ALU_SLT
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_sltu(self):
-        if self.opcode == 0x33 and self.funct3 == 3 and self.funct7b5 == 0:
+        if self._opcode == 0x33 and self._funct3 == 3 and self._funct7b5 == 0:
             assert self.alu_op == ALU_SLTU
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_xor(self):
-        if self.opcode == 0x33 and self.funct3 == 4 and self.funct7b5 == 0:
+        if self._opcode == 0x33 and self._funct3 == 4 and self._funct7b5 == 0:
             assert self.alu_op == ALU_XOR
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_srl(self):
-        if self.opcode == 0x33 and self.funct3 == 5 and self.funct7b5 == 0:
+        if self._opcode == 0x33 and self._funct3 == 5 and self._funct7b5 == 0:
             assert self.alu_op == ALU_SRL
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_sra(self):
-        if self.opcode == 0x33 and self.funct3 == 5 and self.funct7b5 == 1:
+        if self._opcode == 0x33 and self._funct3 == 5 and self._funct7b5 == 1:
             assert self.alu_op == ALU_SRA
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_or(self):
-        if self.opcode == 0x33 and self.funct3 == 6 and self.funct7b5 == 0:
+        if self._opcode == 0x33 and self._funct3 == 6 and self._funct7b5 == 0:
             assert self.alu_op == ALU_OR
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_and(self):
-        if self.opcode == 0x33 and self.funct3 == 7 and self.funct7b5 == 0:
+        if self._opcode == 0x33 and self._funct3 == 7 and self._funct7b5 == 0:
             assert self.alu_op == ALU_AND
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     # ==================================================================
     # I-type ALU instructions — opcode = 0x13
-    # use_rs1=1, use_rs2=0, use_rd=1, imm_sel=IMM_I
-    # is_load=0, is_store=0, is_branch=0, is_jal=0, is_jalr=0
     # Note: funct7b5 is a don't-care for all except SLLI/SRLI/SRAI.
     # ==================================================================
 
     @constraint
-    def c_addi(self):
-        if self.opcode == 0x13 and self.funct3 == 0:
-            assert self.alu_op == ALU_ADD
+    def c_itype_alu_common(self):
+        if self._opcode == 0x13:
             assert self.imm_sel == IMM_I
             assert self.use_rs1 == 1
             assert self.use_rs2 == 0
@@ -276,128 +232,59 @@ class RV32IDecode(zdc.Action[RV32Core]):
             assert self.is_branch == 0
             assert self.is_jal == 0
             assert self.is_jalr == 0
+
+    @constraint
+    def c_addi(self):
+        if self._opcode == 0x13 and self._funct3 == 0:
+            assert self.alu_op == ALU_ADD
 
     @constraint
     def c_slti(self):
-        if self.opcode == 0x13 and self.funct3 == 2:
+        if self._opcode == 0x13 and self._funct3 == 2:
             assert self.alu_op == ALU_SLT
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_sltiu(self):
-        if self.opcode == 0x13 and self.funct3 == 3:
+        if self._opcode == 0x13 and self._funct3 == 3:
             assert self.alu_op == ALU_SLTU
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_xori(self):
-        if self.opcode == 0x13 and self.funct3 == 4:
+        if self._opcode == 0x13 and self._funct3 == 4:
             assert self.alu_op == ALU_XOR
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_ori(self):
-        if self.opcode == 0x13 and self.funct3 == 6:
+        if self._opcode == 0x13 and self._funct3 == 6:
             assert self.alu_op == ALU_OR
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_andi(self):
-        if self.opcode == 0x13 and self.funct3 == 7:
+        if self._opcode == 0x13 and self._funct3 == 7:
             assert self.alu_op == ALU_AND
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_slli(self):
-        if self.opcode == 0x13 and self.funct3 == 1 and self.funct7b5 == 0:
+        if self._opcode == 0x13 and self._funct3 == 1 and self._funct7b5 == 0:
             assert self.alu_op == ALU_SLL
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_srli(self):
-        if self.opcode == 0x13 and self.funct3 == 5 and self.funct7b5 == 0:
+        if self._opcode == 0x13 and self._funct3 == 5 and self._funct7b5 == 0:
             assert self.alu_op == ALU_SRL
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     @constraint
     def c_srai(self):
-        if self.opcode == 0x13 and self.funct3 == 5 and self.funct7b5 == 1:
+        if self._opcode == 0x13 and self._funct3 == 5 and self._funct7b5 == 1:
             assert self.alu_op == ALU_SRA
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
 
     # ==================================================================
     # Load instructions — opcode = 0x03
-    # alu_op=ADD (address = rs1 + imm), use_rs1=1, use_rs2=0, use_rd=1
-    # imm_sel=IMM_I, is_load=1, is_store=0, is_branch=0, is_jal=0, is_jalr=0
     # ==================================================================
 
     @constraint
-    def c_lb(self):
-        if self.opcode == 0x03 and self.funct3 == 0:
+    def c_load_common(self):
+        if self._opcode == 0x03:
             assert self.alu_op == ALU_ADD
             assert self.imm_sel == IMM_I
             assert self.use_rs1 == 1
@@ -408,140 +295,78 @@ class RV32IDecode(zdc.Action[RV32Core]):
             assert self.is_branch == 0
             assert self.is_jal == 0
             assert self.is_jalr == 0
+
+    @constraint
+    def c_lb(self):
+        if self._opcode == 0x03 and self._funct3 == 0:
             assert self.mem_width == 0
             assert self.mem_signed == 1
 
     @constraint
     def c_lh(self):
-        if self.opcode == 0x03 and self.funct3 == 1:
-            assert self.alu_op == ALU_ADD
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 1
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
+        if self._opcode == 0x03 and self._funct3 == 1:
             assert self.mem_width == 1
             assert self.mem_signed == 1
 
     @constraint
     def c_lw(self):
-        if self.opcode == 0x03 and self.funct3 == 2:
-            assert self.alu_op == ALU_ADD
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 1
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
+        if self._opcode == 0x03 and self._funct3 == 2:
             assert self.mem_width == 2
             assert self.mem_signed == 0  # full 32-bit word, no sign extension needed
 
     @constraint
     def c_lbu(self):
-        if self.opcode == 0x03 and self.funct3 == 4:
-            assert self.alu_op == ALU_ADD
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 1
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
+        if self._opcode == 0x03 and self._funct3 == 4:
             assert self.mem_width == 0
             assert self.mem_signed == 0
 
     @constraint
     def c_lhu(self):
-        if self.opcode == 0x03 and self.funct3 == 5:
-            assert self.alu_op == ALU_ADD
-            assert self.imm_sel == IMM_I
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 1
-            assert self.is_load == 1
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
+        if self._opcode == 0x03 and self._funct3 == 5:
             assert self.mem_width == 1
             assert self.mem_signed == 0
 
     # ==================================================================
     # Store instructions — opcode = 0x23
-    # alu_op=ADD (address = rs1 + imm), use_rs1=1, use_rs2=1, use_rd=0
-    # imm_sel=IMM_S, is_load=0, is_store=1, is_branch=0, is_jal=0, is_jalr=0
-    # mem_signed=0 (stores never sign-extend)
     # ==================================================================
+
+    @constraint
+    def c_store_common(self):
+        if self._opcode == 0x23:
+            assert self.alu_op == ALU_ADD
+            assert self.imm_sel == IMM_S
+            assert self.use_rs1 == 1
+            assert self.use_rs2 == 1
+            assert self.use_rd  == 0
+            assert self.is_load == 0
+            assert self.is_store == 1
+            assert self.is_branch == 0
+            assert self.is_jal == 0
+            assert self.is_jalr == 0
+            assert self.mem_signed == 0
 
     @constraint
     def c_sb(self):
-        if self.opcode == 0x23 and self.funct3 == 0:
-            assert self.alu_op == ALU_ADD
-            assert self.imm_sel == IMM_S
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 0
-            assert self.is_load == 0
-            assert self.is_store == 1
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
+        if self._opcode == 0x23 and self._funct3 == 0:
             assert self.mem_width == 0
-            assert self.mem_signed == 0
 
     @constraint
     def c_sh(self):
-        if self.opcode == 0x23 and self.funct3 == 1:
-            assert self.alu_op == ALU_ADD
-            assert self.imm_sel == IMM_S
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 0
-            assert self.is_load == 0
-            assert self.is_store == 1
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
+        if self._opcode == 0x23 and self._funct3 == 1:
             assert self.mem_width == 1
-            assert self.mem_signed == 0
 
     @constraint
     def c_sw(self):
-        if self.opcode == 0x23 and self.funct3 == 2:
-            assert self.alu_op == ALU_ADD
-            assert self.imm_sel == IMM_S
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 0
-            assert self.is_load == 0
-            assert self.is_store == 1
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
+        if self._opcode == 0x23 and self._funct3 == 2:
             assert self.mem_width == 2
-            assert self.mem_signed == 0
 
     # ==================================================================
     # Branch instructions — opcode = 0x63
-    # use_rs1=1, use_rs2=1, use_rd=0, imm_sel=IMM_B
-    # is_load=0, is_store=0, is_branch=1, is_jal=0, is_jalr=0
-    # mem_width=0, mem_signed=0
-    # The ALU compares the two registers to decide taken/not-taken.
     # ==================================================================
 
     @constraint
-    def c_beq(self):
-        if self.opcode == 0x63 and self.funct3 == 0:
-            assert self.alu_op == ALU_XOR   # XOR then test == 0
+    def c_branch_common(self):
+        if self._opcode == 0x63:
             assert self.imm_sel == IMM_B
             assert self.use_rs1 == 1
             assert self.use_rs2 == 1
@@ -553,86 +378,36 @@ class RV32IDecode(zdc.Action[RV32Core]):
             assert self.is_jalr == 0
             assert self.mem_width == 0
             assert self.mem_signed == 0
+
+    @constraint
+    def c_beq(self):
+        if self._opcode == 0x63 and self._funct3 == 0:
+            assert self.alu_op == ALU_XOR   # XOR then test == 0
 
     @constraint
     def c_bne(self):
-        if self.opcode == 0x63 and self.funct3 == 1:
+        if self._opcode == 0x63 and self._funct3 == 1:
             assert self.alu_op == ALU_XOR   # XOR then test != 0
-            assert self.imm_sel == IMM_B
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 0
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 1
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
-            assert self.mem_width == 0
-            assert self.mem_signed == 0
 
     @constraint
     def c_blt(self):
-        if self.opcode == 0x63 and self.funct3 == 4:
+        if self._opcode == 0x63 and self._funct3 == 4:
             assert self.alu_op == ALU_SLT
-            assert self.imm_sel == IMM_B
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 0
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 1
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
-            assert self.mem_width == 0
-            assert self.mem_signed == 0
 
     @constraint
     def c_bge(self):
-        if self.opcode == 0x63 and self.funct3 == 5:
+        if self._opcode == 0x63 and self._funct3 == 5:
             assert self.alu_op == ALU_SLT   # taken when SLT == 0
-            assert self.imm_sel == IMM_B
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 0
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 1
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
-            assert self.mem_width == 0
-            assert self.mem_signed == 0
 
     @constraint
     def c_bltu(self):
-        if self.opcode == 0x63 and self.funct3 == 6:
+        if self._opcode == 0x63 and self._funct3 == 6:
             assert self.alu_op == ALU_SLTU
-            assert self.imm_sel == IMM_B
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 0
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 1
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
-            assert self.mem_width == 0
-            assert self.mem_signed == 0
 
     @constraint
     def c_bgeu(self):
-        if self.opcode == 0x63 and self.funct3 == 7:
+        if self._opcode == 0x63 and self._funct3 == 7:
             assert self.alu_op == ALU_SLTU  # taken when SLTU == 0
-            assert self.imm_sel == IMM_B
-            assert self.use_rs1 == 1
-            assert self.use_rs2 == 1
-            assert self.use_rd  == 0
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 1
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
-            assert self.mem_width == 0
-            assert self.mem_signed == 0
 
     # ==================================================================
     # Upper-immediate and jump instructions — each has a unique opcode.
@@ -641,7 +416,7 @@ class RV32IDecode(zdc.Action[RV32Core]):
 
     @constraint
     def c_lui(self):
-        if self.opcode == 0x37:
+        if self._opcode == 0x37:
             assert self.alu_op == ALU_PASS  # forward immediate directly to rd
             assert self.imm_sel == IMM_U
             assert self.use_rs1 == 0
@@ -657,7 +432,7 @@ class RV32IDecode(zdc.Action[RV32Core]):
 
     @constraint
     def c_auipc(self):
-        if self.opcode == 0x17:
+        if self._opcode == 0x17:
             assert self.alu_op == ALU_ADD   # PC + upper-immediate
             assert self.imm_sel == IMM_U
             assert self.use_rs1 == 0
@@ -673,7 +448,7 @@ class RV32IDecode(zdc.Action[RV32Core]):
 
     @constraint
     def c_jal(self):
-        if self.opcode == 0x6F:
+        if self._opcode == 0x6F:
             assert self.alu_op == ALU_ADD   # PC + J-imm (link address = PC+4)
             assert self.imm_sel == IMM_J
             assert self.use_rs1 == 0
@@ -689,7 +464,7 @@ class RV32IDecode(zdc.Action[RV32Core]):
 
     @constraint
     def c_jalr(self):
-        if self.opcode == 0x67:
+        if self._opcode == 0x67:
             assert self.alu_op == ALU_ADD   # rs1 + I-imm (then clear bit 0)
             assert self.imm_sel == IMM_I
             assert self.use_rs1 == 1
@@ -710,7 +485,7 @@ class RV32IDecode(zdc.Action[RV32Core]):
 
     @constraint
     def c_fence(self):
-        if self.opcode == 0x0F and self.funct3 == 0:
+        if self._opcode == 0x0F and self._funct3 == 0:
             assert self.alu_op == ALU_ADD
             assert self.imm_sel == IMM_NONE
             assert self.use_rs1 == 0
@@ -725,24 +500,10 @@ class RV32IDecode(zdc.Action[RV32Core]):
             assert self.mem_signed == 0
 
     @constraint
-    def c_ecall(self):
-        if self.opcode == 0x73 and self.funct3 == 0 and self.funct7b5 == 0:
-            assert self.alu_op == ALU_ADD
-            assert self.imm_sel == IMM_NONE
-            assert self.use_rs1 == 0
-            assert self.use_rs2 == 0
-            assert self.use_rd  == 0
-            assert self.is_load == 0
-            assert self.is_store == 0
-            assert self.is_branch == 0
-            assert self.is_jal == 0
-            assert self.is_jalr == 0
-            assert self.mem_width == 0
-            assert self.mem_signed == 0
-
-    @constraint
-    def c_ebreak(self):
-        if self.opcode == 0x73 and self.funct3 == 0 and self.funct7b5 == 1:
+    def c_system(self):
+        """ECALL and EBREAK share identical decode outputs; only the input
+        encoding (funct7b5) differs, which the pipeline observes separately."""
+        if self._opcode == 0x73 and self._funct3 == 0:
             assert self.alu_op == ALU_ADD
             assert self.imm_sel == IMM_NONE
             assert self.use_rs1 == 0

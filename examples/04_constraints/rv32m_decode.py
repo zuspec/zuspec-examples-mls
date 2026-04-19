@@ -49,7 +49,7 @@ class RV32MDecode(RV32IDecode):
 
     @constraint
     def c_mul(self):
-        if self.opcode == 0x33 and self.funct3 == 0 and self.funct7b0 == 1:
+        if self._opcode == 0x33 and self._funct3 == 0 and self.funct7b0 == 1:
             assert self.alu_op == ALU_MUL
             assert self.use_rs1 == 1
             assert self.use_rs2 == 1
@@ -62,7 +62,7 @@ class RV32MDecode(RV32IDecode):
 
     @constraint
     def c_mulh(self):
-        if self.opcode == 0x33 and self.funct3 == 1 and self.funct7b0 == 1:
+        if self._opcode == 0x33 and self._funct3 == 1 and self.funct7b0 == 1:
             assert self.alu_op == ALU_MULH
             assert self.use_rs1 == 1
             assert self.use_rs2 == 1
@@ -75,7 +75,7 @@ class RV32MDecode(RV32IDecode):
 
     @constraint
     def c_mulhsu(self):
-        if self.opcode == 0x33 and self.funct3 == 2 and self.funct7b0 == 1:
+        if self._opcode == 0x33 and self._funct3 == 2 and self.funct7b0 == 1:
             assert self.alu_op == ALU_MULHSU
             assert self.use_rs1 == 1
             assert self.use_rs2 == 1
@@ -88,7 +88,7 @@ class RV32MDecode(RV32IDecode):
 
     @constraint
     def c_mulhu(self):
-        if self.opcode == 0x33 and self.funct3 == 3 and self.funct7b0 == 1:
+        if self._opcode == 0x33 and self._funct3 == 3 and self.funct7b0 == 1:
             assert self.alu_op == ALU_MULHU
             assert self.use_rs1 == 1
             assert self.use_rs2 == 1
@@ -101,7 +101,7 @@ class RV32MDecode(RV32IDecode):
 
     @constraint
     def c_div(self):
-        if self.opcode == 0x33 and self.funct3 == 4 and self.funct7b0 == 1:
+        if self._opcode == 0x33 and self._funct3 == 4 and self.funct7b0 == 1:
             assert self.alu_op == ALU_DIV
             assert self.use_rs1 == 1
             assert self.use_rs2 == 1
@@ -114,7 +114,7 @@ class RV32MDecode(RV32IDecode):
 
     @constraint
     def c_divu(self):
-        if self.opcode == 0x33 and self.funct3 == 5 and self.funct7b0 == 1:
+        if self._opcode == 0x33 and self._funct3 == 5 and self.funct7b0 == 1:
             assert self.alu_op == ALU_DIVU
             assert self.use_rs1 == 1
             assert self.use_rs2 == 1
@@ -127,7 +127,7 @@ class RV32MDecode(RV32IDecode):
 
     @constraint
     def c_rem(self):
-        if self.opcode == 0x33 and self.funct3 == 6 and self.funct7b0 == 1:
+        if self._opcode == 0x33 and self._funct3 == 6 and self.funct7b0 == 1:
             assert self.alu_op == ALU_REM
             assert self.use_rs1 == 1
             assert self.use_rs2 == 1
@@ -140,7 +140,7 @@ class RV32MDecode(RV32IDecode):
 
     @constraint
     def c_remu(self):
-        if self.opcode == 0x33 and self.funct3 == 7 and self.funct7b0 == 1:
+        if self._opcode == 0x33 and self._funct3 == 7 and self.funct7b0 == 1:
             assert self.alu_op == ALU_REMU
             assert self.use_rs1 == 1
             assert self.use_rs2 == 1

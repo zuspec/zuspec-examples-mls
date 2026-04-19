@@ -422,9 +422,9 @@ class TestBlockCount:
         cc = ConstraintCompiler(RV32IDecode, prefix="")
         cc.extract()
         derived = cc._derived_to_bitrange
-        assert "opcode"   in derived, "opcode not in derived_to_bitrange"
-        assert "funct3"   in derived, "funct3 not in derived_to_bitrange"
-        assert "funct7b5" in derived, "funct7b5 not in derived_to_bitrange"
-        assert derived["opcode"].lsb   == 0  and derived["opcode"].msb   == 6
-        assert derived["funct3"].lsb   == 12 and derived["funct3"].msb   == 14
-        assert derived["funct7b5"].lsb == 30 and derived["funct7b5"].msb == 30
+        assert "_opcode"   in derived, "_opcode not in derived_to_bitrange"
+        assert "_funct3"   in derived, "_funct3 not in derived_to_bitrange"
+        assert "_funct7b5" in derived, "_funct7b5 not in derived_to_bitrange"
+        assert derived["_opcode"].lsb   == 0  and derived["_opcode"].msb   == 6
+        assert derived["_funct3"].lsb   == 12 and derived["_funct3"].msb   == 14
+        assert derived["_funct7b5"].lsb == 30 and derived["_funct7b5"].msb == 30

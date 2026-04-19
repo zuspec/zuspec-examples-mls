@@ -1,0 +1,24 @@
+
+package:
+  name: zuspec-examples-rtl
+
+  dep-sets:
+  - name: default-dev
+    deps:
+    - name: zuspec
+      url: https://github.com/zuspec/zuspec.git
+    - name: yosys
+      src: gh-rls
+      url: https://github.com/edapack/yosys-bin
+      cache: true
+    - name: verilator
+      src: gh-rls
+      url: https://github.com/edapack/verilator-bin
+      cache: true
+    - name: build
+      src: pypi
+    - name: uvloop
+      src: pypi
+
+  
+
